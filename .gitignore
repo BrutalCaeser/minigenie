@@ -1,0 +1,35 @@
+# Mac metadata (critical — external SSD creates these everywhere)
+._*
+.DS_Store
+.Spotlight-V100
+.Trashes
+.fseventsd
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+
+# Model artifacts
+*.pt
+*.pth
+*.ckpt
+
+# Data (stored on SSD, not in git) — use /prefix to match only top-level
+/data/
+/outputs/
+
+# Experiment tracking
+wandb/
+
+# Notebooks
+notebooks/.ipynb_checkpoints/
+
+# Misc
+*.npz
+*.tar.gz

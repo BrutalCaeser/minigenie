@@ -1,0 +1,15 @@
+torch>=2.1.0
+torchvision>=0.16.0
+numpy>=1.24.0
+einops>=0.7.0
+pyyaml>=6.0
+wandb>=0.16.0
+gradio>=4.0.0
+matplotlib>=3.7.0
+Pillow>=10.0.0
+tqdm>=4.65.0
+imageio>=2.31.0
+scipy>=1.11.0
+pytest>=7.4.0
+# procgen — install separately, may need special handling on Apple Silicon
+# See docs/master_build_plan.md Phase 4 Step 4.1 for instructions

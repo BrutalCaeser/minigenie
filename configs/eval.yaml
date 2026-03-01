@@ -1,0 +1,54 @@
+# Evaluation Settings
+# Source: docs/build_spec.md §7
+
+# --- Single-step prediction quality (§7.1) ---
+single_step:
+  num_test_sequences: 1000                # From unseen Procgen levels
+  target_psnr_db: 22.0
+  metrics:
+    - psnr
+    - ssim
+
+# --- Rollout quality degradation (§7.2) ---
+rollout:
+  num_rollouts: 500
+  max_steps: 50                           # Generate 50-step rollouts
+  metrics:
+    - psnr_per_step                       # Plot mean PSNR vs step number
+  compare:
+    - with_noise_augmentation
+    - without_noise_augmentation
+
+# --- Action differentiation (§7.3) ---
+action_differentiation:
+  num_start_frames: 100
+  num_actions: 15                         # Generate 1-step pred for all 15 actions
+  metric: mean_l2_distance                # Between predictions with different actions
+
+# --- Cross-game generalization (§7.4) ---
+cross_game:
+  method: leave_one_out                   # Train on 4 games, test on 5th
+  games:
+    - coinrun
+    - starpilot
+    - climber
+    - ninja
+    - bigfish
+
+# --- Qualitative analysis (§7.5) ---
+qualitative:
+  num_cherry_picked: 10                   # Best cases
+  num_failure_cases: 10                   # Worst cases
+  output_format:
+    - gif
+    - mp4
+    - png_grid
+
+# --- Inference settings ---
+inference:
+  num_steps: 15                           # Euler ODE steps
+  cfg_scale: 2.0
+  cfg_scales_to_sweep: [1.5, 2.0, 3.0]   # For ablation
+
+# --- Reproducibility ---
+seed: 42

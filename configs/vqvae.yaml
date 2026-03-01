@@ -1,0 +1,46 @@
+# VQ-VAE Hyperparameters
+# Source: docs/build_spec.md §2.2
+
+# --- Model ---
+model:
+  # Encoder / Decoder
+  in_channels: 3
+  hidden_channels: [64, 128, 256]       # Conv stack channel progression
+  num_res_blocks: 2                       # ResBlocks after final encoder conv
+  # Vector Quantization
+  codebook_size: 512                      # K = 512 entries
+  embed_dim: 256                          # D = 256 dimensional
+  l2_normalize: true                      # Project encoder output + codebook onto unit sphere
+  ema_decay: 0.99                         # Exponential moving average for codebook updates
+  commitment_cost: 0.25                   # β in commitment loss: β * ||z_e - sg(z_q)||²
+  dead_code_reset_every: 1000            # Steps between dead code resets
+  dead_code_threshold: 2                  # Reset entries used < this many times since last reset
+
+# --- Training ---
+training:
+  max_steps: 50000
+  batch_size: 64
+  learning_rate: 3.0e-4
+  optimizer: adamw
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  scheduler: cosine                       # Cosine decay to 0
+  warmup_steps: 0
+  # Logging & Checkpointing
+  log_every: 100
+  save_every: 2000
+  sample_every: 5000
+  max_checkpoints_kept: 3
+
+# --- Data ---
+data:
+  image_resolution: 64                    # Start with 64×64, scale to 128×128 later
+  normalize_range: [0.0, 1.0]            # Pixel values normalized to [0, 1]
+
+# --- Targets ---
+targets:
+  psnr_db: 28.0                           # Reconstruction PSNR > 28 dB
+  codebook_utilization_pct: 80.0          # > 80% of codes used
+
+# --- Reproducibility ---
+seed: 42

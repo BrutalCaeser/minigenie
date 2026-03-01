@@ -1,0 +1,73 @@
+# Flow Matching Dynamics Model Hyperparameters
+# Source: docs/build_spec.md §2.3, §2.4, §6
+
+# --- Model ---
+model:
+  # U-Net architecture
+  in_channels: 15                         # 3 (noisy target) + 12 (4 context frames × 3 channels)
+  out_channels: 3                         # Predicted velocity field
+  channel_mult: [64, 128, 256, 512]       # Channels at each U-Net level
+  cond_dim: 512                           # Conditioning embedding dimension
+  num_groups: 32                          # GroupNorm groups
+  attention_resolutions: [16]             # Self-attention only at 16×16 spatial resolution
+  # Context
+  context_frames: 4                       # H = 4 past frames
+  frame_skip: 1                           # Every frame (Procgen has visible changes each step)
+  # Actions
+  num_actions: 15                         # Procgen discrete action space
+  action_embed_dim: 256                   # Action embedding before projection to cond_dim
+  # Time embedding
+  time_embed_dim: 256                     # Sinusoidal embedding dimension before MLP
+
+# --- Flow Matching ---
+flow:
+  num_inference_steps: 15                 # Euler ODE integration steps at inference
+  cfg_scale: 2.0                          # Classifier-free guidance scale
+  cfg_dropout: 0.1                        # 10% action dropout during training
+
+# --- Noise Augmentation ---
+noise_augmentation:
+  enabled: true
+  probability: 0.5                        # 50% chance of augmenting context frames
+  sigma_min: 0.0
+  sigma_max: 0.3
+
+# --- Training ---
+training:
+  max_steps: 150000
+  batch_size: 16                          # A100 40GB; accumulate gradients ×2 if needed
+  gradient_accumulation_steps: 1
+  learning_rate: 2.0e-4
+  min_learning_rate: 1.0e-5               # Cosine decay target
+  optimizer: adamw
+  betas: [0.9, 0.999]
+  weight_decay: 0.01
+  scheduler: cosine
+  warmup_steps: 1000                      # Linear warmup from 0
+  gradient_clip_norm: 1.0
+  mixed_precision: fp16                   # torch.amp autocast
+  # Logging & Checkpointing
+  log_every: 100
+  save_every: 2000
+  sample_every: 5000
+  max_checkpoints_kept: 3
+
+# --- Data ---
+data:
+  image_resolution: 64                    # Start 64×64, scale to 128×128 later
+  games:
+    - coinrun
+    - starpilot
+    - climber
+    - ninja
+    - bigfish
+  episodes_per_game: 5000
+  max_steps_per_episode: 500
+
+# --- Targets ---
+targets:
+  single_step_psnr_db: 22.0              # 1-step prediction PSNR > 22 dB
+  loss_range: [0.01, 0.05]               # Expected flow matching loss range
+
+# --- Reproducibility ---
+seed: 42
