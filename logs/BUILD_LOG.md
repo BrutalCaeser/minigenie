@@ -90,3 +90,37 @@
 ### Next
 - Phase 3: Implement `src/models/vqvae.py` — VQ-VAE tokenizer with EMA codebook, L2 normalization, dead code reset
 - Write `tests/test_vqvae.py`
+---
+
+## 2026-03-01 — Phase 3: VQ-VAE tokenizer
+
+### What was done
+- Implemented `src/models/vqvae.py` — standalone VQ-VAE tokenizer (not part of dynamics pipeline):
+  - `VQVAEResBlock` — simple conv-GroupNorm-ReLU-conv + skip residual block (no conditioning, unlike the U-Net ResBlock)
+  - `Encoder` — 3 strided Conv2d (3→64→128→256) with GroupNorm+ReLU, 2 VQVAEResBlocks, 1×1 conv to codebook_dim, L2-normalize output → 8× spatial downsample
+  - `Decoder` — mirror: 1×1 conv from codebook_dim, 2 VQVAEResBlocks, 3 ConvTranspose2d (256→128→64→3) with GroupNorm+ReLU, Sigmoid output
+  - `VectorQuantizer` — 512 entries, 256-dim, all core features:
+    - L2-normalized codebook stored as buffer (not parameter — updated via EMA, not gradient)
+    - Cosine similarity assignment via argmax of dot product (both vectors on unit sphere)
+    - Straight-through estimator: `z_q = z_e + (z_q - z_e).detach()`
+    - EMA update with decay γ=0.99 and Laplace smoothing on counts
+    - Dead code reset every 1000 steps: codes used < 2 times get replaced with random encoder outputs + N(0, 0.01)
+  - `VQVAE` — full pipeline wrapping encoder → quantizer → decoder, with `encode()`, `decode()`, `forward()`, `compute_loss()` methods
+- Wrote `tests/test_vqvae.py` with 24 tests covering:
+  - Encoder: output shape at 128×128 and 64×64, L2 normalization of output
+  - Decoder: output shape at 128×128 and 64×64, output range [0,1] via Sigmoid
+  - VectorQuantizer: output shapes, indices in [0, K), straight-through gradient flow, codebook L2-normalization, EMA actually updates codebook in training, no update in eval, dead code reset replaces unused entries, codebook utilization (≥50% unique codes used)
+  - VQVAE end-to-end: reconstruction shape, output range, losses finite, gradient flow to encoder and decoder, encode→decode roundtrip shape, compute_loss API, param count 4M-12M, no NaN/Inf
+
+### Notes
+- VQ-VAE param count: 6,103,939 (~6.1M) — well within expected range. Codebook: [512, 256].
+- Used a separate `VQVAEResBlock` (simpler, no conditioning) instead of reusing blocks.py `ResBlock` — VQ-VAE is a standalone autoencoder that doesn't need AdaGN.
+- Codebook is a `register_buffer`, not a `nn.Parameter`. This is correct because it's updated via EMA, not backprop. Avoids optimizer applying weight decay or momentum to it.
+
+### Test results
+- 70/70 passed (29 blocks + 17 unet + 24 vqvae) in 7.86s. All green.
+
+### Next
+- Phase 4: Data pipeline — `src/data/generate_procgen.py` and `src/data/dataset.py`
+- Handle procgen Apple Silicon compatibility
+- Generate CoinRun episodes, write dataset loader with ._* filtering
