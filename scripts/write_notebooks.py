@@ -58,7 +58,7 @@ os.makedirs(f'{DRIVE_PROJECT}/checkpoints/dynamics', exist_ok=True)
 print(f'Drive project root: {DRIVE_PROJECT}')
 print('Contents:', os.listdir(DRIVE_PROJECT))"""),
     md("## 2. Clone / Sync Code from GitHub"),
-    code("""REPO_URL = 'https://github.com/YOUR_USERNAME/minigenie.git'  # <-- UPDATE THIS
+    code("""REPO_URL = 'https://github.com/BrutalCaeser/minigenie.git'  # <-- UPDATE THIS
 LOCAL_CODE = '/content/minigenie'
 
 if os.path.exists(LOCAL_CODE):
@@ -147,7 +147,7 @@ DRIVE_PROJECT = '/content/drive/MyDrive/minigenie'
 os.makedirs(f'{DRIVE_PROJECT}/checkpoints/vqvae', exist_ok=True)
 os.makedirs(f'{DRIVE_PROJECT}/samples_vqvae', exist_ok=True)
 print(f'Drive project root: {DRIVE_PROJECT}')"""),
-    code("""REPO_URL = 'https://github.com/YOUR_USERNAME/minigenie.git'  # <-- UPDATE THIS
+    code("""REPO_URL = 'https://github.com/BrutalCaeser/minigenie.git'  # <-- UPDATE THIS
 LOCAL_CODE = '/content/minigenie'
 
 if os.path.exists(LOCAL_CODE):
@@ -367,7 +367,7 @@ DRIVE_PROJECT = '/content/drive/MyDrive/minigenie'
 os.makedirs(f'{DRIVE_PROJECT}/checkpoints/dynamics', exist_ok=True)
 os.makedirs(f'{DRIVE_PROJECT}/samples_dynamics', exist_ok=True)
 print(f'Drive project root: {DRIVE_PROJECT}')"""),
-    code("""REPO_URL = 'https://github.com/YOUR_USERNAME/minigenie.git'  # <-- UPDATE THIS
+    code("""REPO_URL = 'https://github.com/BrutalCaeser/minigenie.git'  # <-- UPDATE THIS
 LOCAL_CODE = '/content/minigenie'
 
 if os.path.exists(LOCAL_CODE):
