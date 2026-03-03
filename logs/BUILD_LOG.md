@@ -171,3 +171,124 @@
 
 ### Next
 - Phase 5: Training infrastructure — CheckpointManager, train_vqvae.py, train_dynamics.py, smoke_test.py
+
+---
+
+## 2026-03-02 — Phase 5: Training infrastructure
+
+### What was done
+- Implemented `src/training/checkpoint.py` — `CheckpointManager`:
+  - Saves `step_{step:07d}.pt` files with model, optimizer, scheduler, RNG states + optional extras
+  - Auto-deletes old checkpoints beyond `max_keep` (default 3)
+  - `load_latest()`, `load_step()`, `resume()`, `list_checkpoints()`, `latest_step` property
+  - Stores CPU + CUDA RNG states for perfect reproducibility across resume
+
+- Implemented `src/training/train_vqvae.py` — VQ-VAE training loop:
+  - `FrameDataset` — loads individual frames from .npz episodes (VQ-VAE doesn't need sequences)
+  - Loads config from YAML, creates model/optimizer/scheduler, auto-resumes from checkpoint
+  - CosineAnnealingLR scheduler, AdamW optimizer
+  - Training loop with logging (loss, codebook utilization, lr, steps/s) every 100 steps
+  - Checkpoint save every 2000 steps, sample reconstruction grids every 5000 steps
+  - GPU memory monitoring every 1000 steps
+  - Emergency checkpoint on KeyboardInterrupt/Exception
+  - Full CLI via argparse
+
+- Implemented `src/training/train_dynamics.py` — flow matching dynamics training loop:
+  - `flow_matching_step()` — core flow matching train step from build_spec §2.4:
+    - Sample t ~ U[0,1], interpolate x_t = (1-t)*noise + t*target, target velocity v = target - noise
+    - Noise augmentation on context frames (GameNGen technique): p=0.5, σ∈[0,0.3]
+    - Concat [x_t, context] → [B,15,H,W], predict velocity, MSE loss
+  - `generate_next_frame()` — Euler ODE integration with classifier-free guidance:
+    - Start from noise, N steps of v_uncond + cfg_scale*(v_cond - v_uncond), clamp [0,1]
+  - Mixed precision via `torch.amp.autocast` + `GradScaler` (fp16 on CUDA)
+  - Gradient clipping max_norm=1.0
+  - AdamW + LambdaLR with linear warmup (1000 steps) → cosine decay (lr 2e-4 → 1e-5)
+  - Gradient accumulation support
+  - Same logging/checkpointing/sample/emergency structure as VQ-VAE trainer
+  - Full CLI via argparse
+
+- Built `scripts/smoke_test.py`:
+  - Creates random data (no real dataset needed)
+  - Runs 1 VQ-VAE training step → verifies finite loss + backward
+  - Runs 1 dynamics training step → verifies finite loss + backward
+  - Runs 1 inference step → verifies output shape + range [0,1]
+  - Checkpoint save/load round-trip → verifies weights match exactly
+  - Tests max_keep cleanup
+  - Prints "🎉 SMOKE TEST PASSED"
+
+- Wrote `tests/test_training_step.py` with 21 tests:
+  - VQ-VAE: compute_loss finite, backward produces gradients, optimizer step changes weights, reconstruction shapes
+  - Dynamics: flow matching loss finite, backward, optimizer step, no-noise-aug mode, full-noise-aug mode
+  - Inference: shape, range [0,1], no-CFG mode, single-step, deterministic with same seed
+  - Checkpoint: save/load, resume restores weights exactly, max_keep deletes old, empty dir returns None
+  - LR schedule: warmup increases lr, cosine decays after warmup, gradient clipping works
+
+### Bug fixes
+- `train_vqvae.py`: Fixed `compute_loss` call — was passing `(x, output)` but API takes just `(x)` and returns `(loss, metrics_dict)`. Also fixed `_save_samples` which accessed `output["x_recon"]` but forward returns a tuple.
+- `train_dynamics.py`: Fixed UNet constructor kwarg `channels=` → `channel_mult=` to match actual signature.
+- Smoke test VQ-VAE: embed_dim must equal `hidden_channels[-1]` (decoder's first ConvTranspose2d expects this).
+
+### Test results
+- Smoke test: PASSED ✅
+- 124/124 passed (29 blocks + 17 unet + 24 vqvae + 33 dataset + 21 training) in 12.22s. All green.
+
+### Next
+- Phase 5.5: Create Colab notebooks (colab_template, 01_train_vqvae, 02_train_dynamics)
+- Phase 6: Push to GitHub, upload data to Drive, start VQ-VAE training on Colab
+
+---
+
+## 2026-03-03 — Phase 5.5: Colab notebooks
+
+### What was done
+- Built `notebooks/colab_template.ipynb` (15 cells: 8 md, 7 code):
+  - Mount Google Drive, create project dirs on Drive
+  - Clone/sync repo from GitHub
+  - Install dependencies (einops, pyyaml, wandb, etc.) + editable install
+  - Verify GPU (assert CUDA, print GPU name/VRAM)
+  - Extract data from tar.gz on Drive, filter `._*` files
+  - Verify data integrity (spot-check episodes, assert ≥1000)
+  - Optional smoke test cell
+
+- Built `notebooks/01_train_vqvae.ipynb` (19 cells: 9 md, 10 code):
+  - Full setup cells (Drive, clone, deps, GPU)
+  - Data extraction with `._*` filtering
+  - Symlink `checkpoints/vqvae/` and `samples_vqvae/` to Drive for persistence
+  - Smoke test before training
+  - Train cell: calls `from src.training.train_vqvae import train` with Drive paths
+  - Post-training: display reconstruction samples from Drive
+  - PSNR computation: loads checkpoint, runs 1024 frames, reports mean/median/min/max vs 28 dB target
+  - Codebook utilization check vs 80% target
+  - Drive contents summary
+
+- Built `notebooks/02_train_dynamics.ipynb` (21 cells: 10 md, 11 code):
+  - Full setup cells with GPU-aware batch size recommendation (A100 vs T4)
+  - Data extraction with sequence structure verification (frames = actions + 1)
+  - Symlink `checkpoints/dynamics/` and `samples_dynamics/` to Drive
+  - Smoke test before training
+  - Train cell: calls `from src.training.train_dynamics import train` with Drive paths
+  - Post-training: display sample prediction images (target vs predicted grids)
+  - 20-step autoregressive rollout generation with visualization grid
+  - Single-step PSNR computation over 320 samples vs 22 dB target
+  - Drive contents summary
+
+### Design decisions
+- **Symlinks to Drive** rather than writing directly — checkpoints survive Colab disconnects automatically
+- **`._*` filtering** in every data glob (Rule 6)
+- **Auto-resume** — notebooks always pass `resume=True`; just re-run after disconnect
+- **GPU batch size guidance** in dynamics notebook (A100=16, T4=8, small=4+accum)
+- **Emergency checkpoint** already handled by training scripts' try/except
+
+### Bug found and fixed
+- `scripts/write_notebooks.py` had wrong path resolution — used `os.path.dirname(__file__)` which pointed to `scripts/notebooks/` instead of `notebooks/`. Fixed to `os.path.dirname(os.path.dirname(__file__))`.
+- ExFAT SSD: `create_file` tool writes content to `._*` Apple Double metadata files instead of the actual files (0-byte `.ipynb` files). Workaround: write notebooks via Python script with explicit `f.flush()` + `os.fsync(f.fileno())`.
+
+### Validation
+- All 3 notebooks valid JSON, correct nbformat 4.0
+- All notebook `train()` calls match actual function signatures in train_vqvae.py and train_dynamics.py
+- 124/124 tests still passing
+
+### Phase 5 is now COMPLETE ✅
+
+### Next
+- Phase 6: Push to GitHub, upload CoinRun data to Drive, start VQ-VAE training on Colab
