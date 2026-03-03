@@ -124,3 +124,50 @@
 - Phase 4: Data pipeline — `src/data/generate_procgen.py` and `src/data/dataset.py`
 - Handle procgen Apple Silicon compatibility
 - Generate CoinRun episodes, write dataset loader with ._* filtering
+
+---
+
+## 2026-03-02 — Phase 4: Data pipeline
+
+### What was done
+- Implemented `src/data/generate_procgen.py`:
+  - Full CLI with argparse: `--game`, `--episodes`, `--max-steps`, `--save-dir`, `--synthetic`
+  - Procgen generation via `gym.make("procgen:procgen-{game}-v0")` with random policy
+  - Synthetic fallback mode (`--synthetic`) for local testing on Apple Silicon
+  - Saves episodes as compressed `.npz` files: `frames` [T, H, W, 3] uint8, `actions` [T-1] int32
+- Implemented `src/data/dataset.py` — `WorldModelDataset`:
+  - Loads all `.npz` episodes into memory, builds flat index over valid (episode, timestep) pairs
+  - Returns `(context, action, target)` tuples: context [H*3, h, w] float32 [0,1], action scalar int64, target [3, h, w] float32 [0,1]
+  - `._*` Apple Double file filtering (Rule 6)
+  - Optional `target_resolution` for bilinear upscaling (64→128)
+  - `frame_skip` support, `max_episodes` cap, `validate` flag with integrity checks
+  - Works with `DataLoader` multi-worker
+- Generated 5,000 CoinRun episodes on Google Colab using `procgen2` package (Python 3.11 Linux wheel)
+  - Original `procgen` package is dead — no wheels for Python ≥ 3.9. `procgen2` is a maintained fork on PyPI.
+  - Tar'd on Drive, downloaded to Mac, extracted to SSD at `data/coinrun/episodes/`
+- Wrote `tests/test_dataset.py` with 33 tests covering:
+  - Synthetic generation: file creation, naming, contents, shapes, dtypes, reproducibility
+  - Dataset: loading, shapes (context [12,64,64], target [3,64,64]), value ranges, dtypes, alignment
+  - Temporal alignment: verified target = frames[t+1], context order is chronological, action = actions[t]
+  - Apple Double filtering: ._*.npz files are correctly ignored
+  - Resizing: target_resolution=(128,128) produces correct shapes
+  - Frame skip: frame_skip=2 selects correct indices
+  - Short episodes: barely-enough and too-short episodes handled gracefully
+  - DataLoader: basic, multi-worker, full-epoch iteration with NaN/Inf checks
+  - Validation: empty dir raises FileNotFoundError, bad action range raises ValueError
+
+### Issues encountered
+- **procgen won't install on Apple Silicon M4** — `pip install procgen` returns "no matching distribution". Not even `procgen-mirror` or `gymnasium[procgen]` work. Procgen only published wheels for Python ≤ 3.8 on x86. Solution: generate data on Colab using `procgen2` (has cp311 manylinux wheel), tar to Drive, download to SSD.
+- **Terminal cwd corruption** — after SSD disconnect/reconnect or long idle, zsh terminals get a stale cwd (`getcwd: cannot access parent directories`). Fix: `cd /Volumes/Crucial_X9/Projects/minigenie` in a fresh terminal.
+
+### Data verification
+- 5,000 episodes at `data/coinrun/episodes/ep_00000.npz` through `ep_04999.npz`
+- Frames: `[T, 64, 64, 3]` uint8 — episode lengths vary (35–501, mean ~407)
+- Actions: `[T-1]` int32, range [0, 14] — roughly uniform across all 15 actions
+- No NaN, no corrupted files
+
+### Test results
+- 103/103 passed (29 blocks + 17 unet + 24 vqvae + 33 dataset) in 10.46s. All green.
+
+### Next
+- Phase 5: Training infrastructure — CheckpointManager, train_vqvae.py, train_dynamics.py, smoke_test.py
