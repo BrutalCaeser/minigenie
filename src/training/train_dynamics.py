@@ -442,7 +442,9 @@ def _save_samples(
 
     # Row 1: targets, Row 2: predictions
     images = torch.cat([target.cpu(), pred.cpu()], dim=0)
-    samples_dir = os.path.join(os.path.dirname(ckpt_dir), "samples_dynamics")
+    # Save alongside the checkpoints parent dir, e.g. checkpoints/dynamics -> samples_dynamics
+    project_root = os.path.dirname(os.path.dirname(ckpt_dir))
+    samples_dir = os.path.join(project_root, "samples_dynamics")
     os.makedirs(samples_dir, exist_ok=True)
     save_image(images, os.path.join(samples_dir, f"step_{step:07d}.png"), nrow=4)
     print(f"  Samples saved at step {step}")

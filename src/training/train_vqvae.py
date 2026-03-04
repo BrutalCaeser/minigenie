@@ -345,7 +345,9 @@ def _save_samples(
     # Interleave original and reconstruction
     images = torch.stack([batch.cpu(), recon.cpu()], dim=1).reshape(-1, *batch.shape[1:])
 
-    samples_dir = os.path.join(os.path.dirname(ckpt_dir), "samples_vqvae")
+    # Save alongside the checkpoints parent dir, e.g. checkpoints/vqvae -> samples_vqvae
+    project_root = os.path.dirname(os.path.dirname(ckpt_dir))
+    samples_dir = os.path.join(project_root, "samples_vqvae")
     os.makedirs(samples_dir, exist_ok=True)
     save_image(images, os.path.join(samples_dir, f"step_{step:07d}.png"), nrow=4)
     print(f"  Samples saved at step {step}")

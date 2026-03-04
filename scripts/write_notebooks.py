@@ -338,7 +338,69 @@ if state is not None:
     print(f'\\nCodebook utilization: {unique}/{total} = {util:.1f}% (target: {target_util}%) [{status}]')
 else:
     print('No checkpoint found. Train the model first.')"""),
-    md("---\n## 7. Post-Session Checklist\n\nAfter training completes or before Colab disconnects:\n\n1. Checkpoints are already on Drive (symlinked)\n2. Sample reconstructions are already on Drive (symlinked)\n3. Update `logs/TRAINING_LOG.md` with session results\n4. Record: final loss, PSNR, codebook utilization, GPU type, steps completed\n5. Push any code changes to GitHub"),
+    md("---\n## 7. Generate Reconstructions from Checkpoint\n\nLoad the trained VQ-VAE and display side-by-side original vs reconstructed frames with per-image PSNR.  \nThis works even if sample images were not saved during training."),
+    code("""import torch
+import numpy as np
+import matplotlib.pyplot as plt
+from src.models.vqvae import VQVAE
+from src.training.checkpoint import CheckpointManager
+from src.training.train_vqvae import FrameDataset
+from torch.utils.data import DataLoader
+import yaml
+
+# Load config
+with open('/content/minigenie/configs/vqvae.yaml') as f:
+    cfg = yaml.safe_load(f)
+mcfg = cfg['model']
+
+# Build model
+model = VQVAE(
+    in_channels=mcfg.get('in_channels', 3),
+    hidden_channels=mcfg.get('hidden_channels', [64, 128, 256]),
+    codebook_size=mcfg.get('codebook_size', 512),
+    embed_dim=mcfg.get('embed_dim', 256),
+    num_res_blocks=mcfg.get('num_res_blocks', 2),
+    ema_decay=mcfg.get('ema_decay', 0.99),
+    commitment_cost=mcfg.get('commitment_cost', 0.25),
+).cuda()
+
+# Load checkpoint
+ckpt_mgr = CheckpointManager('/content/minigenie/checkpoints/vqvae')
+state = ckpt_mgr.load_latest()
+assert state is not None, 'No checkpoint found — train VQ-VAE first!'
+model.load_state_dict(state['model'])
+model.eval()
+print(f"Loaded checkpoint at step {state['step']}")
+
+# Grab a random batch of 8 frames
+dataset = FrameDataset('/content/minigenie/data/coinrun/episodes', resolution=64)
+loader = DataLoader(dataset, batch_size=8, shuffle=True)
+originals = next(iter(loader)).cuda()
+
+with torch.no_grad():
+    recons, _, _, _ = model(originals)
+
+# Compute per-image PSNR
+mse_per = ((originals - recons) ** 2).mean(dim=(1, 2, 3))
+psnr_per = -10 * torch.log10(mse_per + 1e-8)
+
+# Plot side-by-side
+fig, axes = plt.subplots(2, 8, figsize=(20, 5))
+for i in range(8):
+    orig_np = originals[i].cpu().permute(1, 2, 0).clamp(0, 1).numpy()
+    rec_np = recons[i].cpu().permute(1, 2, 0).clamp(0, 1).numpy()
+    axes[0, i].imshow(orig_np)
+    axes[0, i].set_title('Original', fontsize=9)
+    axes[0, i].axis('off')
+    axes[1, i].imshow(rec_np)
+    axes[1, i].set_title(f'PSNR {psnr_per[i]:.1f} dB', fontsize=9)
+    axes[1, i].axis('off')
+
+fig.suptitle(f"VQ-VAE Reconstructions  (step {state['step']}, mean PSNR {psnr_per.mean():.1f} dB)", fontsize=13)
+plt.tight_layout()
+plt.show()
+print(f"\\nMean PSNR: {psnr_per.mean():.2f} dB | Min: {psnr_per.min():.2f} dB | Max: {psnr_per.max():.2f} dB")"""),
+    md("---\n## 8. Post-Session Checklist\n\nAfter training completes or before Colab disconnects:\n\n1. Checkpoints are already on Drive (symlinked)\n2. Sample reconstructions are already on Drive (symlinked)\n3. Update `logs/TRAINING_LOG.md` with session results\n4. Record: final loss, PSNR, codebook utilization, GPU type, steps completed\n5. Push any code changes to GitHub"),
     code("""# Summary of what's on Drive
 print('=== Drive Contents ===')
 for subdir in ['checkpoints/vqvae', 'samples_vqvae']:
