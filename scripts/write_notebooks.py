@@ -697,4 +697,429 @@ for subdir in ['checkpoints/dynamics', 'samples_dynamics']:
         print(f'  {subdir}/: (not found)')"""),
 ])
 
+# ============================================================
+# 03_evaluate.ipynb
+# ============================================================
+write_nb(os.path.join(NOTEBOOKS_DIR, "03_evaluate.ipynb"), [
+    md("# MiniGenie \u2014 Full Evaluation Suite\n\nRun the complete evaluation pipeline on the trained dynamics model (CoinRun).\n\n**Spec:** `docs/build_spec.md` \u00a77 \u2014 Single-step PSNR, rollout degradation, action differentiation, qualitative analysis.\n\n**Config:** `configs/eval.yaml`\n\n### What this notebook produces\n1. **Single-step PSNR & SSIM** \u2014 1000 samples, target >22 dB\n2. **Rollout degradation curve** \u2014 PSNR vs step over 200 rollouts of 50 steps\n3. **Action differentiation score** \u2014 do different actions produce different frames?\n4. **Cherry-picked rollout GIFs** \u2014 best and worst cases\n5. **Action comparison grids** \u2014 same context, all 15 actions\n\nAll outputs are saved to Google Drive under `outputs/eval/`."),
+    md("---\n## 1. Setup"),
+    code("""from google.colab import drive
+drive.mount('/content/drive')
+
+import os
+DRIVE_PROJECT = '/content/drive/MyDrive/minigenie'
+OUTPUT_DIR = f'{DRIVE_PROJECT}/outputs/eval'
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+print(f'Drive project: {DRIVE_PROJECT}')
+print(f'Eval outputs: {OUTPUT_DIR}')"""),
+    code("""REPO_URL = 'https://github.com/BrutalCaeser/minigenie.git'
+LOCAL_CODE = '/content/minigenie'
+
+if os.path.exists(LOCAL_CODE):
+    !cd {LOCAL_CODE} && git pull --ff-only
+else:
+    !git clone {REPO_URL} {LOCAL_CODE}
+
+os.chdir(LOCAL_CODE)
+!git log --oneline -3"""),
+    code("""!pip install -q einops pyyaml tqdm imageio scipy pillow matplotlib torchvision
+!pip install -q -e .
+
+import torch
+print(f'GPU: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"CPU only\"}')"""),
+    md("---\n## 2. Extract Data & Load Model"),
+    code("""import glob
+import numpy as np
+import yaml
+
+# Extract data if needed
+DATA_TAR = f'{DRIVE_PROJECT}/coinrun_data.tar.gz'
+LOCAL_DATA = '/content/minigenie/data/coinrun/episodes'
+
+if os.path.exists(LOCAL_DATA) and len(os.listdir(LOCAL_DATA)) > 100:
+    print('Data already extracted.')
+elif os.path.exists(DATA_TAR):
+    print('Extracting data...')
+    !tar xzf {DATA_TAR} -C /content/minigenie/
+else:
+    raise FileNotFoundError(f'Data archive not found at {DATA_TAR}')
+
+paths = sorted([p for p in glob.glob(f'{LOCAL_DATA}/*.npz')
+                if not os.path.basename(p).startswith('._')])
+print(f'Episodes: {len(paths)}')"""),
+    code("""# Symlink checkpoints from Drive
+import shutil
+
+ckpt_local = '/content/minigenie/checkpoints/dynamics'
+ckpt_drive = f'{DRIVE_PROJECT}/checkpoints/dynamics'
+
+os.makedirs(os.path.dirname(ckpt_local), exist_ok=True)
+if os.path.islink(ckpt_local):
+    os.remove(ckpt_local)
+elif os.path.isdir(ckpt_local):
+    shutil.rmtree(ckpt_local)
+os.symlink(ckpt_drive, ckpt_local)
+print(f'Checkpoints: {ckpt_local} -> {ckpt_drive}')
+print(f'Available: {sorted(os.listdir(ckpt_drive))}')"""),
+    code("""from src.models.unet import UNet
+from src.training.checkpoint import CheckpointManager
+from src.data.dataset import WorldModelDataset
+
+# Load config
+with open('/content/minigenie/configs/dynamics.yaml') as f:
+    dyn_cfg = yaml.safe_load(f)
+with open('/content/minigenie/configs/eval.yaml') as f:
+    eval_cfg = yaml.safe_load(f)
+
+mcfg = dyn_cfg['model']
+fcfg = dyn_cfg['flow']
+NUM_STEPS = eval_cfg['inference']['num_steps']
+CFG_SCALE = eval_cfg['inference']['cfg_scale']
+
+# Build & load model
+model = UNet(
+    in_channels=mcfg.get('in_channels', 15),
+    out_channels=mcfg.get('out_channels', 3),
+    channel_mult=mcfg.get('channel_mult', [64, 128, 256, 512]),
+    cond_dim=mcfg.get('cond_dim', 512),
+    num_actions=mcfg.get('num_actions', 15),
+    num_groups=mcfg.get('num_groups', 32),
+    cfg_dropout=0.0,  # No dropout at inference
+).cuda()
+
+ckpt_mgr = CheckpointManager('/content/minigenie/checkpoints/dynamics')
+state = ckpt_mgr.load_latest()
+assert state is not None, 'No checkpoint found!'
+model.load_state_dict(state['model'])
+model.eval()
+step = state['step']
+print(f'Loaded dynamics model at step {step}')
+print(f'Inference: {NUM_STEPS} Euler steps, CFG scale {CFG_SCALE}')
+
+# Load dataset
+dataset = WorldModelDataset(
+    '/content/minigenie/data/coinrun/episodes',
+    context_length=mcfg.get('context_frames', 4),
+)
+print(f'Dataset: {len(dataset)} samples from {dataset.num_episodes} episodes')"""),
+    md("---\n## 3. Single-Step Prediction Quality (\u00a77.1)\n\nGenerate 1-step predictions for 1000 samples. Target: PSNR > 22 dB."),
+    code("""from src.eval.metrics import evaluate_single_step
+
+single_step_results = evaluate_single_step(
+    model, dataset,
+    num_samples=eval_cfg['single_step']['num_test_sequences'],
+    batch_size=eval_cfg['single_step'].get('batch_size', 16),
+    num_inference_steps=NUM_STEPS,
+    cfg_scale=CFG_SCALE,
+    device='cuda',
+)
+
+target_psnr = eval_cfg['single_step']['target_psnr_db']
+status = 'PASS' if single_step_results['psnr_mean'] >= target_psnr else 'BELOW TARGET'
+
+print(f\"\"\"
+=== Single-Step Prediction Quality ===
+  PSNR Mean:   {single_step_results['psnr_mean']:.2f} dB  (target: {target_psnr} dB) [{status}]
+  PSNR Median: {single_step_results['psnr_median']:.2f} dB
+  PSNR Std:    {single_step_results['psnr_std']:.2f} dB
+  PSNR Range:  [{single_step_results['psnr_min']:.2f}, {single_step_results['psnr_max']:.2f}] dB
+  SSIM Mean:   {single_step_results['ssim_mean']:.4f}
+  SSIM Std:    {single_step_results['ssim_std']:.4f}
+  Samples:     {single_step_results['num_samples']}
+\"\"\")"""),
+    md("---\n## 4. Rollout Quality Degradation (\u00a77.2)\n\nGenerate multi-step rollouts and plot PSNR at each step.\nThis shows how fast errors accumulate autoregressively."),
+    code("""from src.eval.metrics import evaluate_rollout_degradation
+from src.eval.visualize import plot_psnr_curve
+
+rollout_results = evaluate_rollout_degradation(
+    model, dataset,
+    num_rollouts=eval_cfg['rollout']['num_rollouts'],
+    max_steps=eval_cfg['rollout']['max_steps'],
+    num_inference_steps=NUM_STEPS,
+    cfg_scale=CFG_SCALE,
+    device='cuda',
+)
+
+print(f\"\"\"
+=== Rollout Quality Degradation ===
+  Rollouts: {rollout_results['num_rollouts_actual']}
+  Steps:    {eval_cfg['rollout']['max_steps']}
+  Step  1 PSNR: {rollout_results['psnr_per_step'][0]:.2f} dB
+  Step 10 PSNR: {rollout_results['psnr_per_step'][9]:.2f} dB
+  Step 25 PSNR: {rollout_results['psnr_per_step'][24]:.2f} dB
+  Step 50 PSNR: {rollout_results['psnr_per_step'][49]:.2f} dB
+\"\"\")
+
+# Save PSNR degradation curve
+plot_psnr_curve(
+    rollout_results['psnr_per_step'],
+    f'{OUTPUT_DIR}/psnr_degradation_curve.png',
+    psnr_std_per_step=rollout_results['psnr_std_per_step'],
+    ssim_per_step=rollout_results['ssim_per_step'],
+    target_psnr=target_psnr,
+    title=f'Rollout Quality Degradation (step {step}, {rollout_results[\"num_rollouts_actual\"]} rollouts)',
+)"""),
+    code("""# Also display the curve inline
+import matplotlib.pyplot as plt
+from PIL import Image
+
+img = Image.open(f'{OUTPUT_DIR}/psnr_degradation_curve.png')
+fig, ax = plt.subplots(1, 1, figsize=(12, 5))
+ax.imshow(img)
+ax.axis('off')
+plt.tight_layout()
+plt.show()"""),
+    md("---\n## 5. Action Differentiation (\u00a77.3)\n\nFor 100 starting contexts, generate 1-step predictions with all 15 actions.\nMeasure pairwise L2 distance \u2014 if conditioning works, different actions should produce different outputs."),
+    code("""from src.eval.metrics import evaluate_action_differentiation
+
+action_results = evaluate_action_differentiation(
+    model, dataset,
+    num_start_frames=eval_cfg['action_differentiation']['num_start_frames'],
+    num_actions=eval_cfg['action_differentiation']['num_actions'],
+    num_inference_steps=NUM_STEPS,
+    cfg_scale=CFG_SCALE,
+    device='cuda',
+)
+
+print(f\"\"\"
+=== Action Differentiation ===
+  Mean L2 distance:  {action_results['mean_l2_distance']:.4f}
+  Std L2 distance:   {action_results['std_l2_distance']:.4f}
+  Range:             [{action_results['min_l2_distance']:.4f}, {action_results['max_l2_distance']:.4f}]
+  Start frames:      {action_results['num_start_frames']}
+\"\"\")
+
+# Per-action mean distances
+print('Per-action mean L2 distance from other actions:')
+for a, d in enumerate(action_results['per_action_mean_dist']):
+    bar = '#' * int(d * 200)
+    print(f'  Action {a:2d}: {d:.4f} {bar}')"""),
+    md("---\n## 6. Action Comparison Grids (\u00a77.3 visual)\n\nVisualize predictions for all 15 actions from the same starting context."),
+    code("""from src.eval.visualize import plot_action_comparison
+from src.training.train_dynamics import generate_next_frame
+
+# Pick 3 different starting contexts
+import random
+random.seed(42)
+sample_indices = random.sample(range(len(dataset)), min(3, len(dataset)))
+
+for s_idx, data_idx in enumerate(sample_indices):
+    context, _, _ = dataset[data_idx]
+    context_gpu = context.unsqueeze(0).cuda()
+
+    # Generate for all 15 actions
+    predictions = {}
+    with torch.no_grad():
+        for a in range(15):
+            act = torch.tensor([a], dtype=torch.long, device='cuda')
+            pred = generate_next_frame(model, context_gpu, act, NUM_STEPS, CFG_SCALE)
+            predictions[a] = pred[0].cpu()
+
+    # Last context frame for display
+    H = mcfg.get('context_frames', 4)
+    last_ctx = context[(H-1)*3:H*3]  # [3, h, w]
+
+    path = f'{OUTPUT_DIR}/action_comparison_{s_idx}.png'
+    plot_action_comparison(
+        predictions, path,
+        context_frame=last_ctx,
+        title=f'Action Comparison (sample {s_idx})',
+    )
+
+    # Display inline
+    img = Image.open(path)
+    fig, ax = plt.subplots(1, 1, figsize=(16, 5))
+    ax.imshow(img)
+    ax.axis('off')
+    plt.tight_layout()
+    plt.show()"""),
+    md("---\n## 7. Cherry-Picked Rollouts (\u00a77.5)\n\nGenerate rollouts, rank by mean PSNR, save the best and worst as GIFs and grids."),
+    code("""from src.eval.rollout import generate_rollout_with_gt
+from src.eval.visualize import save_rollout_grid, save_rollout_gif
+from src.eval.metrics import compute_psnr
+
+ROLLOUT_STEPS = eval_cfg['qualitative'].get('rollout_steps', 20)
+NUM_CHERRY = eval_cfg['qualitative']['num_cherry_picked']
+NUM_FAIL = eval_cfg['qualitative']['num_failure_cases']
+H = dataset.context_length
+
+# Collect valid start points
+valid_starts = []
+for ep_idx, (frames, actions) in enumerate(dataset.episodes):
+    T = len(frames)
+    min_t = H * dataset.frame_skip
+    max_t = min(T - 1, len(actions)) - ROLLOUT_STEPS
+    for t in range(min_t, max(min_t, max_t + 1)):
+        valid_starts.append((ep_idx, t))
+
+# Sample a manageable number to rank
+rng = np.random.RandomState(42)
+num_candidates = min(100, len(valid_starts))
+chosen = rng.choice(len(valid_starts), size=num_candidates, replace=False)
+
+rollout_scores = []
+rollout_data = []
+
+print(f'Generating {num_candidates} rollouts of {ROLLOUT_STEPS} steps to rank...')
+for i, idx in enumerate(chosen):
+    ep_idx, start_t = valid_starts[idx]
+    pred, gt, acts = generate_rollout_with_gt(
+        model, dataset, ep_idx, start_t, ROLLOUT_STEPS,
+        num_inference_steps=NUM_STEPS, cfg_scale=CFG_SCALE, device='cuda',
+    )
+    # Mean PSNR across all steps
+    psnr_vals = [compute_psnr(p, g).item() for p, g in zip(pred, gt)]
+    mean_psnr = np.mean(psnr_vals)
+    rollout_scores.append(mean_psnr)
+    rollout_data.append((pred, gt, acts, ep_idx, start_t))
+    if (i + 1) % 20 == 0:
+        print(f'  {i+1}/{num_candidates} done (last mean PSNR: {mean_psnr:.1f} dB)')
+
+# Rank
+ranked = np.argsort(rollout_scores)
+best_indices = ranked[-NUM_CHERRY:][::-1]
+worst_indices = ranked[:NUM_FAIL]
+
+print(f'\\nBest {NUM_CHERRY} rollouts (mean PSNR):')
+for i in best_indices:
+    print(f'  ep={rollout_data[i][3]} t={rollout_data[i][4]}: {rollout_scores[i]:.2f} dB')
+
+print(f'\\nWorst {NUM_FAIL} rollouts (mean PSNR):')
+for i in worst_indices:
+    print(f'  ep={rollout_data[i][3]} t={rollout_data[i][4]}: {rollout_scores[i]:.2f} dB')"""),
+    code("""# Save best rollouts as GIFs and grids
+os.makedirs(f'{OUTPUT_DIR}/best_rollouts', exist_ok=True)
+os.makedirs(f'{OUTPUT_DIR}/worst_rollouts', exist_ok=True)
+
+def save_rollout_outputs(indices, label, subdir):
+    for rank, i in enumerate(indices):
+        pred, gt, acts, ep_idx, start_t = rollout_data[i]
+        score = rollout_scores[i]
+
+        # Build context frames for display
+        frames_np, actions_np = dataset.episodes[ep_idx]
+        ctx_list = []
+        for ci in range(H):
+            t_idx = start_t - (H - ci) * dataset.frame_skip
+            f = torch.from_numpy(frames_np[t_idx].copy()).float().div(255).permute(2, 0, 1)
+            ctx_list.append(f)
+
+        # Grid: GT row + Predicted row
+        save_rollout_grid(
+            pred, f'{OUTPUT_DIR}/{subdir}/rollout_{rank:02d}_grid.png',
+            context_frames=ctx_list, gt_frames=gt,
+            title=f'{label} #{rank} (PSNR {score:.1f} dB, ep={ep_idx} t={start_t})',
+        )
+
+        # GIF of predictions
+        save_rollout_gif(
+            pred, f'{OUTPUT_DIR}/{subdir}/rollout_{rank:02d}.gif',
+            fps=8, context_frames=ctx_list,
+        )
+
+save_rollout_outputs(best_indices, 'Best', 'best_rollouts')
+save_rollout_outputs(worst_indices, 'Worst', 'worst_rollouts')
+
+print('\\nAll rollout outputs saved to Drive.')"""),
+    code("""# Display a few inline
+for rank, i in enumerate(best_indices[:3]):
+    pred, gt, _, ep_idx, start_t = rollout_data[i]
+    score = rollout_scores[i]
+
+    fig, axes = plt.subplots(2, min(10, ROLLOUT_STEPS), figsize=(20, 4))
+    cols = min(10, ROLLOUT_STEPS)
+    for j in range(cols):
+        axes[0, j].imshow(gt[j].permute(1,2,0).clamp(0,1).numpy())
+        axes[0, j].set_title(f't={j}', fontsize=7)
+        axes[0, j].axis('off')
+        axes[1, j].imshow(pred[j].permute(1,2,0).clamp(0,1).numpy())
+        axes[1, j].axis('off')
+    axes[0, 0].set_ylabel('GT', fontsize=9)
+    axes[1, 0].set_ylabel('Pred', fontsize=9)
+    fig.suptitle(f'Best #{rank} — PSNR {score:.1f} dB (ep={ep_idx}, t={start_t})', fontsize=11)
+    plt.tight_layout()
+    plt.show()
+
+for rank, i in enumerate(worst_indices[:3]):
+    pred, gt, _, ep_idx, start_t = rollout_data[i]
+    score = rollout_scores[i]
+
+    fig, axes = plt.subplots(2, min(10, ROLLOUT_STEPS), figsize=(20, 4))
+    cols = min(10, ROLLOUT_STEPS)
+    for j in range(cols):
+        axes[0, j].imshow(gt[j].permute(1,2,0).clamp(0,1).numpy())
+        axes[0, j].set_title(f't={j}', fontsize=7)
+        axes[0, j].axis('off')
+        axes[1, j].imshow(pred[j].permute(1,2,0).clamp(0,1).numpy())
+        axes[1, j].axis('off')
+    axes[0, 0].set_ylabel('GT', fontsize=9)
+    axes[1, 0].set_ylabel('Pred', fontsize=9)
+    fig.suptitle(f'Worst #{rank} — PSNR {score:.1f} dB (ep={ep_idx}, t={start_t})', fontsize=11)
+    plt.tight_layout()
+    plt.show()"""),
+    md("---\n## 8. Summary & Export\n\nCollect all metrics into a summary for the evaluation report."),
+    code("""import json
+
+summary = {
+    'model_step': step,
+    'game': 'coinrun',
+    'inference_steps': NUM_STEPS,
+    'cfg_scale': CFG_SCALE,
+    'single_step': single_step_results,
+    'rollout': {
+        'num_rollouts': rollout_results['num_rollouts_actual'],
+        'max_steps': eval_cfg['rollout']['max_steps'],
+        'psnr_step_1': float(rollout_results['psnr_per_step'][0]),
+        'psnr_step_10': float(rollout_results['psnr_per_step'][9]),
+        'psnr_step_25': float(rollout_results['psnr_per_step'][24]),
+        'psnr_step_50': float(rollout_results['psnr_per_step'][49]),
+    },
+    'action_differentiation': {
+        'mean_l2': action_results['mean_l2_distance'],
+        'std_l2': action_results['std_l2_distance'],
+    },
+}
+
+# Save to Drive
+json_path = f'{OUTPUT_DIR}/eval_results.json'
+with open(json_path, 'w') as f:
+    json.dump(summary, f, indent=2)
+print(f'Results saved to {json_path}')
+
+# Pretty print
+print('\\n' + '='*50)
+print('  EVALUATION SUMMARY')
+print('='*50)
+print(f\"\"\"
+  Model:           dynamics @ step {step}
+  Game:            CoinRun
+
+  Single-step PSNR:  {single_step_results['psnr_mean']:.2f} dB (target: {target_psnr} dB) [{'PASS' if single_step_results['psnr_mean'] >= target_psnr else 'BELOW'}]
+  Single-step SSIM:  {single_step_results['ssim_mean']:.4f}
+
+  Rollout PSNR:
+    Step  1: {rollout_results['psnr_per_step'][0]:.2f} dB
+    Step 10: {rollout_results['psnr_per_step'][9]:.2f} dB
+    Step 25: {rollout_results['psnr_per_step'][24]:.2f} dB
+    Step 50: {rollout_results['psnr_per_step'][49]:.2f} dB
+
+  Action differentiation:
+    Mean L2 distance: {action_results['mean_l2_distance']:.4f}
+
+  Outputs saved to: {OUTPUT_DIR}/
+\"\"\")"""),
+    md("---\n## 9. Post-Evaluation Checklist\n\n1. \u2705 All outputs saved to `outputs/eval/` on Drive\n2. Copy `eval_results.json` into `docs/EVALUATION.md`\n3. Update `logs/BUILD_LOG.md` with evaluation results\n4. Push code to GitHub\n5. Proceed to Phase 9 (demo)"),
+    code("""# List all output files
+print('=== Evaluation Outputs on Drive ===')
+for root, dirs, files in os.walk(OUTPUT_DIR):
+    level = root.replace(OUTPUT_DIR, '').count(os.sep)
+    indent = '  ' * level
+    subdir = os.path.basename(root)
+    print(f'{indent}{subdir}/')
+    sub_indent = '  ' * (level + 1)
+    for f in sorted(files):
+        size_kb = os.path.getsize(os.path.join(root, f)) / 1024
+        print(f'{sub_indent}{f} ({size_kb:.1f} KB)')"""),
+])
+
 print("\nAll notebooks written successfully.")
