@@ -50,7 +50,7 @@ Generate multi-step rollouts autoregressively (each predicted frame becomes cont
 
 **Configuration:** 200 rollouts, 50 steps each, random starting points.
 
-![Rollout degradation curve](../outputs/eval/psnr_degradation_curve.png)
+![Rollout degradation curve](../assets/psnr_degradation_curve.png)
 
 **Assessment:** PSNR drops steeply in the first 10 steps (27 → 14 dB), then plateaus around 11–12 dB. This is the model converging to a "mean image" — a blurry average of plausible CoinRun frames. The model produces recognizable frames for ~3–5 steps before visual quality degrades significantly.
 
