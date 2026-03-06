@@ -386,3 +386,50 @@ Single-step prediction is strong (27 dB, SSIM 0.84). But more training made roll
 - Phase 9: Gradio demo (single-step interactive prediction where model excels)
 - Create `docs/EVALUATION.md` with full metrics and analysis
 - Update README with results
+
+---
+
+## 2026-03-06 — Phase 9: Demo, Evaluation Report, README
+
+### What was done
+- Implemented `src/demo/app.py` — Gradio interactive demo:
+  - Loads dynamics model from checkpoint, seed frames from real episodes
+  - 6 meaningful CoinRun action buttons (Left, Right, Jump, Jump-Left, Jump-Right, No-op)
+  - Reset button loads random real context frames
+  - Filmstrip shows frame history (last 20 frames)
+  - Honest status bar and documentation about limitations
+  - CLI with `--ckpt-dir`, `--data-dir`, `--share`, `--device` options
+  - Works on both Colab (GPU) and local (CPU, slower)
+
+- Wrote `docs/EVALUATION.md` — full evaluation report:
+  - Single-step PSNR/SSIM results with training progression table
+  - Rollout degradation analysis with sharpening-vs-robustness tradeoff explanation
+  - Action differentiation analysis with 4 root causes identified
+  - Qualitative analysis of best/worst rollouts
+  - VQ-VAE results
+  - Success criteria checklist (honest — marks partial items as partial)
+  - Reproducibility section
+
+- Updated `README.md`:
+  - Status badge: "work in progress" → "complete"
+  - Added results table with actual numbers and honest limitations
+  - Updated architecture section (42M params, not ~30-35M estimate)
+  - Changed "5 Procgen games" → "CoinRun" (reflecting actual scope)
+  - Added training instructions with Colab notebook links
+  - Added demo usage instructions
+  - Added documentation links section
+  - Fixed GitHub URL (was YOUR_USERNAME, now BrutalCaeser)
+
+### Design decisions
+- **Demo shows only 6 CoinRun actions** (not all 15) — actions 9–14 are no-ops in CoinRun, and DOWN is ignored. Showing all 15 would be misleading.
+- **Demo warns about degradation** — explicit note that quality drops after ~5 steps. Honest UX over polished UX.
+- **Evaluation report documents limitations as prominently as successes** — the sharpening-vs-robustness tradeoff, weak action conditioning, and rollout degradation are all explained with root causes.
+
+### Test results
+- 144/144 tests passing (no regressions)
+- Demo module imports cleanly, action mappings verified
+
+### Phase 9 COMPLETE ✅ (demo + evaluation + README)
+
+### Next
+- Phase 10: Final cleanup, commit, tag v1.0.0
