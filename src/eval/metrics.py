@@ -153,8 +153,12 @@ def evaluate_single_step(
 
     model.eval()
 
-    # Limit dataset to num_samples
-    indices = list(range(min(num_samples, len(dataset))))
+    # Randomly sample indices for representative evaluation
+    # (sequential first-N is biased toward the first few episodes)
+    rng = np.random.RandomState(42)
+    total = len(dataset)
+    n = min(num_samples, total)
+    indices = rng.choice(total, size=n, replace=False).tolist()
     subset = Subset(dataset, indices)
     loader = DataLoader(subset, batch_size=batch_size, shuffle=False, num_workers=0)
 
