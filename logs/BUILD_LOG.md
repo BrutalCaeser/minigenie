@@ -292,3 +292,97 @@
 
 ### Next
 - Phase 6: Push to GitHub, upload CoinRun data to Drive, start VQ-VAE training on Colab
+
+---
+
+## 2026-03-03 — Phase 6: VQ-VAE Training
+
+### What was done
+- Pushed code to GitHub: https://github.com/BrutalCaeser/minigenie
+- Uploaded `coinrun_data.tar.gz` to Google Drive
+- Ran `01_train_vqvae.ipynb` on Colab — 50K steps
+
+### Results
+- **PSNR: 31.12 dB** (target ≥ 28 dB) ✅ PASS
+- **Codebook utilization: 100%** (512/512, target ≥ 80%) ✅ PASS
+- VQ-VAE converged well above targets
+
+### Bug fixed
+- `_save_samples` in both training scripts used wrong path for saving sample images. Fixed to resolve project root correctly.
+- Added reconstruction visualization cell to `01_train_vqvae.ipynb`
+
+### Phase 6 COMPLETE ✅
+
+---
+
+## 2026-03-04 — Phase 7: Dynamics Training (Session 1: 0→40K)
+
+### What was done
+- Scoped down from 5 games to **CoinRun only** to save Google Drive space
+- Ran `02_train_dynamics.ipynb` on Colab — 40K steps
+- Training log PSNR at 40K: 26.06 dB mean (target ≥ 22 dB) ✅
+
+### Decision
+- CoinRun-only for remainder of project — depth of analysis over breadth
+
+---
+
+## 2026-03-05 — Phase 8: Evaluation Code + First Eval
+
+### What was done (code)
+- Implemented `src/eval/rollout.py` — autoregressive rollout generation, GT comparison
+- Implemented `src/eval/metrics.py` — PSNR, SSIM, single-step eval, rollout degradation, action differentiation
+- Implemented `src/eval/visualize.py` — rollout grids, GIFs, PSNR curves, action comparison plots
+- Updated `configs/eval.yaml` — removed cross-game section, CoinRun-only
+- Wrote `tests/test_eval.py` — 20 tests, all passing
+- Built `notebooks/03_evaluate.ipynb` — 26 cells, full evaluation pipeline
+- Updated `scripts/write_notebooks.py` with 03_evaluate generation
+- **Total tests: 144/144 passing** (124 original + 20 eval)
+
+### Bug found during eval
+- `evaluate_single_step` used sequential indices `range(1000)` — biased toward first ~5 episodes, producing deflated 20.36 dB PSNR
+- Fixed to use `np.random.RandomState(42).choice()` for representative random sampling
+- Training log (26.06 dB) and rollout step-1 (26.09 dB) confirmed the corrected baseline
+
+### First evaluation at 40K (results)
+- Single-step PSNR: ~26 dB ✅ (but rollout and action differentiation weak)
+- Decision: train to 80K before finalizing evaluation
+
+---
+
+## 2026-03-06 — Phase 7 continued + Phase 8 Final Eval (80K)
+
+### What was done
+- Trained dynamics model from 40K → 80K steps on Colab
+- Ran full evaluation suite at 80K
+
+### Evaluation results (80K)
+
+| Metric | 40K | 80K | Δ |
+|---|---|---|---|
+| Single-step PSNR | ~26.06 | 26.75 / 26.99* | +0.7–0.9 |
+| Single-step SSIM | 0.716 | 0.840 | +0.124 |
+| Rollout step 1 | 26.09 | 27.00 | +0.91 |
+| Rollout step 10 | 14.77 | 14.17 | −0.60 |
+| Rollout step 25 | 12.98 | 12.04 | −0.94 |
+| Rollout step 50 | 11.82 | 10.98 | −0.84 |
+| Action L2 | 0.063 | 0.064 | ~flat |
+
+*\*26.75 from evaluate_single_step (1000 random samples), 26.99 from training log (320 random batch samples)*
+
+### Honest assessment
+Single-step prediction is strong (27 dB, SSIM 0.84). But more training made rollouts *worse* (sharpening-vs-robustness tradeoff) and didn't improve action differentiation. The model excels at 1-step prediction but degrades quickly in autoregressive mode.
+
+### Success criteria check (from master_build_plan.md)
+- [x] Dynamics model produces coherent 1-step predictions (PSNR > 20 dB) — **26.99 dB ✅**
+- [~] Autoregressive rollouts visually coherent for ≥10 steps — **3–5 frames, partial**
+- [ ] Different actions produce visibly different predictions — **weak (L2=0.064)**
+- [x] VQ-VAE sharp reconstructions (PSNR > 28 dB) — **31.12 dB ✅**
+
+### Phase 7 COMPLETE ✅ (80K steps, CoinRun)
+### Phase 8 COMPLETE ✅ (full evaluation with honest analysis)
+
+### Next
+- Phase 9: Gradio demo (single-step interactive prediction where model excels)
+- Create `docs/EVALUATION.md` with full metrics and analysis
+- Update README with results
