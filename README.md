@@ -2,6 +2,7 @@
 
 > A video world model that learns to imagine game frames — built entirely from scratch in PyTorch.
 
+[![Live Demo](https://img.shields.io/badge/%F0%9F%A4%97%20Live%20Demo-Play%20Now-blueviolet)](https://huggingface.co/spaces/BrutalCaesar/minigenie)
 ![Status: Complete](https://img.shields.io/badge/status-complete-green)
 ![Built from Scratch](https://img.shields.io/badge/built-from%20scratch-blue)
 ![Tests: 144 passing](https://img.shields.io/badge/tests-144%20passing-brightgreen)
@@ -12,6 +13,15 @@
 </p>
 <p align="center">
   <em>Autoregressive rollouts generated entirely by MiniGenie. Given 4 real context frames and a sequence of actions, the model imagines what happens next — one frame at a time.</em>
+</p>
+
+<p align="center">
+  <br>
+  <a href="https://huggingface.co/spaces/BrutalCaesar/minigenie">
+    <img src="https://img.shields.io/badge/%F0%9F%A7%9E%20Try%20it%20live-HuggingFace%20Spaces-blueviolet?style=for-the-badge" alt="Try it live on HuggingFace Spaces">
+  </a>
+  <br><br>
+  <strong>👆 Click to play CoinRun in your browser — pick an action, see the model imagine the next frame.</strong>
 </p>
 
 ---
@@ -85,15 +95,23 @@ Noisy target (3 channels) ──────┘              ↑
 
 ## Interactive Demo
 
+### 🌐 Play it live — no install needed
+
+The demo is deployed on HuggingFace Spaces (free CPU tier). Pick an action button and watch the model generate the next frame in real time:
+
+**👉 [huggingface.co/spaces/BrutalCaesar/minigenie](https://huggingface.co/spaces/BrutalCaesar/minigenie)**
+
 <p align="center">
   <img src="assets/gradio.png" width="720" alt="Gradio demo — select an action, see the predicted next frame">
 </p>
 <p align="center">
-  <em>The Gradio demo lets you step through CoinRun one frame at a time. Pick an action, and the model imagines the next frame.</em>
+  <em>The live demo lets you step through CoinRun one frame at a time. Pick an action, and the model imagines the next frame. Runs on CPU (~30–60s per frame).</em>
 </p>
 
+### 🖥️ Run locally
+
 ```bash
-# On Colab (GPU) or local (CPU, slower)
+# Requires a checkpoint in checkpoints/dynamics/
 python -m src.demo.app \
     --ckpt-dir checkpoints/dynamics \
     --data-dir data/coinrun/episodes \
